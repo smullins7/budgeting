@@ -1,9 +1,14 @@
 import csv
+import re
 from argparse import ArgumentParser
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-import re
-from typing import Tuple
+
+
+class TopLevel(Enum):
+    ESSENTIAL = 1
+    LIFESTYLE = 2
 
 
 @dataclass
@@ -11,31 +16,70 @@ class Txn:
     date: str
     description: str
     amount: int
-    tag_1: str
-    tag_2: str
+    top_level: TopLevel
+    category: str
+    detail: str
 
     def __repr__(self):
-        return f"{self.date},{self.description},{self.amount},{self.tag_1},{self.tag_2}"
+        return f"{self.date},{self.description},{self.amount},{self.top_level},{self.category},{self.detail}"
 
 
-RULES = {
-    re.compile(r"^Subway \d+$"): ("food", "family")
+ESSENTIALS_RULES = {
+    r"^.*ATT\*BILL PAYMENT.*$": ("bills", "phone"),
+    r"^.*CHEWY.COM.*$": ("Daisy", ""),
+    r"^.*COMCAST.*$": ("Bills", "Internet"),
+    r"^.*COMED.*$": ("Bills", "Utilities"),
+    r"^.*COSTCO.*$": ("Food", "Grocery Store"),
+    r"^.*FREETAXUSA.COM.*$": ("Bills", "Taxes"),
+    r"^.*GEICO.*$": ("Insurance", "Car"),
+    r"^.*HUNTINGTON BANKS.*$": ("Car", "Car Payment"),
+    r"^.*IRS  USATAXPYMT.*$": ("Bills", "Taxes"),
+    r"^.*JET BRITE.*$": ("Car", "Improvement"),
+    r"^.*JEWEL OSCO \d+.*$": ("Food", "Grocery Store"),
+    r"^.*KRISERS NAT PET.*$": ("Daisy", ""),
+    r"^.*LIBERTY MUTUAL.*$": ("House", "Insurance"),
+    r"^.*LOMBARD DIST 44 LUNCH PRO.*$": ("Food", ""),
+    r"^.*LOMBARD GAS STATION.*$": ("Car", "Gas"),
+    r"^.*LOMBARD VETERINARY.*$": ("Daisy", ""),
+    r"^.*MARIANOS.*$": ("Food", "Grocery Store"),
+    r"^.*Morgan Stanley   ACH DEBIT.*$": ("Investment", ""),
+    r"^.*NICOR GAS BILL.*$": ("Bills", "Utilities"),
+    r"^.*Oberweis.*$": ("Food", "Specialty"),
+    r"^.*PAYPAL \*VILLAGELOMB.*$": ("Bills", "Utilities"),
+    r"^.*SHELL OIL.*$": ("Car", "Gas"),
+    r"^.*TRUIST.*$": ("House", "Mortgage"),
+    r"^.*WASTE MANAGEMENT INTERNET.*$": ("Bills", "Utilities"),
+}
+
+LIFESTYLE_RULES = {
+    r"^Subway \d+$": ("food", "family"),
 }
 
 
-def categorize(description: str) -> Tuple[str, str]:
-    for pat, tags in RULES.items():
-        if pat.match(description):
-            return tags
-    return "", ""
+class Rules:
+
+    def __init__(self):
+        self.essentials = {re.compile(k): v for k, v in ESSENTIALS_RULES.items()}
+        self.lifestyle = {re.compile(k): v for k, v in LIFESTYLE_RULES.items()}
+
+    def categorize(self, s):
+        for pat, (category, detail) in self.essentials.items():
+            if pat.match(s):
+                return TopLevel.ESSENTIAL, category, detail
+
+        for pat, (category, detail) in self.lifestyle.items():
+            if pat.match(s):
+                return TopLevel.LIFESTYLE, category, detail
+
+        return TopLevel.LIFESTYLE, "", ""
 
 
-def process_row(row: dict[str, str]) -> Txn:
+def process_row(row: dict[str, str], rules) -> Txn:
     return Txn(
         row["Transaction Date"],
         row["Description"],
         int(float(row["Amount"])),
-        *categorize(row["Description"])
+        *rules.categorize(row["Description"])
     )
 
 
@@ -46,6 +90,7 @@ def run_categorize():
 
     args = parser.parse_args()
     data = list(csv.DictReader(args.raw_file.open("r"), delimiter=","))
+    rules = Rules()
     for row in data:
-        txn = process_row(row)
+        txn = process_row(row, rules)
         print(txn)
