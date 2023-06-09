@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Dict
 
 
 class TopLevel(Enum):
@@ -13,86 +14,56 @@ class TopLevel(Enum):
 
 
 @dataclass
+class Rule:
+    top_level: TopLevel
+    rule: re.Pattern = None
+    category: str = ""
+    detail: str = ""
+
+
+DEFAULT_RULE = Rule(TopLevel.LIFESTYLE)
+
+
+@dataclass
 class Txn:
     date: str
     description: str
     amount: int
-    top_level: TopLevel
-    category: str = ""
-    detail: str = ""
+    rule: Rule
 
     def __repr__(self):
-        return f"{self.date},{self.description},{self.amount},{self.top_level.name},{self.category},{self.detail}"
-
-
-ESSENTIALS_RULES = {
-    r"^.*ATT\*BILL PAYMENT.*$": ("bills", "phone"),
-    r"^.*CHEWY.COM.*$": ("Daisy", ""),
-    r"^.*COMCAST.*$": ("Bills", "Internet"),
-    r"^.*COMED.*$": ("Bills", "Utilities"),
-    r"^.*COSTCO.*$": ("Food", "Grocery Store"),
-    r"^.*FREETAXUSA.COM.*$": ("Bills", "Taxes"),
-    r"^.*GEICO.*$": ("Car", "Insurance"),
-    r"^.*HUNTINGTON BANKS.*$": ("Car", "Car Payment"),
-    r"^.*IRS  USATAXPYMT.*$": ("Bills", "Taxes"),
-    r"^.*JET BRITE.*$": ("Car", "Improvement"),
-    r"^.*JEWEL OSCO \d+.*$": ("Food", "Grocery Store"),
-    r"^.*KRISERS NAT PET.*$": ("Daisy", ""),
-    r"^.*LIBERTY MUTUAL.*$": ("House", "Insurance"),
-    r"^.*LOMBARD DIST 44 LUNCH PRO.*$": ("Food", ""),
-    r"^.*LOMBARD GAS STATION.*$": ("Car", "Gas"),
-    r"^.*LOMBARD VETERINARY.*$": ("Daisy", ""),
-    r"^.*MARIANOS.*$": ("Food", "Grocery Store"),
-    r"^.*Morgan Stanley   ACH DEBIT.*$": ("Investment", ""),
-    r"^.*NICOR GAS BILL.*$": ("Bills", "Utilities"),
-    r"^.*Oberweis.*$": ("Food", "Specialty"),
-    r"^.*PAYPAL \*VILLAGELOMB.*$": ("Bills", "Utilities"),
-    r"^.*SHELL OIL.*$": ("Car", "Gas"),
-    r"^.*TRUIST.*$": ("House", "Mortgage"),
-    r"^.*WASTE MANAGEMENT INTERNET.*$": ("Bills", "Utilities"),
-}
-
-LIFESTYLE_RULES = {
-    r"^Subway \d+$": ("food", "family"),
-}
-
-IGNORE_RULES = {
-    r"^AUTOMATIC PAYMENT.*$",
-    r"^.*TEMPUS LAB DIR DEP.*$",
-    r"^CHASE CREDIT CRD AUTOPAY.*$",
-    r"^INTEREST PAYMENT$",
-}
+        return f"{self.date},{self.description},{self.amount},{self.rule.top_level.name},{self.rule.category},{self.rule.detail}"
 
 
 class Rules:
 
-    def __init__(self):
-        self.essentials = {re.compile(k): v for k, v in ESSENTIALS_RULES.items()}
-        self.lifestyle = {re.compile(k): v for k, v in LIFESTYLE_RULES.items()}
-        self.ignore = {re.compile(s) for s in IGNORE_RULES}
+    def __init__(self, rules_file: Path):
+        self.rules = []
 
-    def categorize(self, s):
-        for pat, (category, detail) in self.essentials.items():
-            if pat.match(s):
-                return TopLevel.ESSENTIAL, category, detail
+        with open(rules_file) as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                self.rules.append(Rule(
+                    TopLevel[row["top"].upper()],
+                    re.compile(row['rule']),
+                    row["category"],
+                    row["detail"]
+                ))
 
-        for pat, (category, detail) in self.lifestyle.items():
-            if pat.match(s):
-                return TopLevel.LIFESTYLE, category, detail
+    def categorize(self, s) -> Rule:
+        for rule in self.rules:
+            if rule.rule.match(s):
+                return rule
 
-        for pat in self.ignore:
-            if pat.match(s):
-                return TopLevel.IGNORE,
-
-        return TopLevel.LIFESTYLE,
+        return DEFAULT_RULE
 
 
-def process_row(row: dict[str, str], rules) -> Txn:
+def process_row(row: Dict[str, str], rules: Rules) -> Txn:
     return Txn(
         row.get("Transaction Date") or row["Posting Date"],
         row["Description"],
         int(float(row["Amount"])),
-        *rules.categorize(row["Description"])
+        rules.categorize(row["Description"])
     )
 
 
@@ -100,12 +71,14 @@ def run_categorize():
     parser = ArgumentParser()
     parser.add_argument("raw_file", help="input file with raw transaction data",
                         type=Path)
+    parser.add_argument("--rules", help="file containing all the rules for labeling and categorization",
+                        default="./rules.csv", type=Path)
 
     args = parser.parse_args()
     data = list(csv.DictReader(args.raw_file.open("r"), delimiter=","))
-    rules = Rules()
+    rules = Rules(args.rules)
     for row in data:
         txn = process_row(row, rules)
-        if txn.top_level == TopLevel.IGNORE:
+        if txn.rule.top_level == TopLevel.IGNORE:
             continue
         print(txn)
