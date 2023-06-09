@@ -9,6 +9,7 @@ from pathlib import Path
 class TopLevel(Enum):
     ESSENTIAL = 1
     LIFESTYLE = 2
+    IGNORE = 3
 
 
 @dataclass
@@ -17,11 +18,11 @@ class Txn:
     description: str
     amount: int
     top_level: TopLevel
-    category: str
-    detail: str
+    category: str = ""
+    detail: str = ""
 
     def __repr__(self):
-        return f"{self.date},{self.description},{self.amount},{self.top_level},{self.category},{self.detail}"
+        return f"{self.date},{self.description},{self.amount},{self.top_level.name},{self.category},{self.detail}"
 
 
 ESSENTIALS_RULES = {
@@ -31,7 +32,7 @@ ESSENTIALS_RULES = {
     r"^.*COMED.*$": ("Bills", "Utilities"),
     r"^.*COSTCO.*$": ("Food", "Grocery Store"),
     r"^.*FREETAXUSA.COM.*$": ("Bills", "Taxes"),
-    r"^.*GEICO.*$": ("Insurance", "Car"),
+    r"^.*GEICO.*$": ("Car", "Insurance"),
     r"^.*HUNTINGTON BANKS.*$": ("Car", "Car Payment"),
     r"^.*IRS  USATAXPYMT.*$": ("Bills", "Taxes"),
     r"^.*JET BRITE.*$": ("Car", "Improvement"),
@@ -55,12 +56,20 @@ LIFESTYLE_RULES = {
     r"^Subway \d+$": ("food", "family"),
 }
 
+IGNORE_RULES = {
+    r"^AUTOMATIC PAYMENT.*$",
+    r"^.*TEMPUS LAB DIR DEP.*$",
+    r"^CHASE CREDIT CRD AUTOPAY.*$",
+    r"^INTEREST PAYMENT$",
+}
+
 
 class Rules:
 
     def __init__(self):
         self.essentials = {re.compile(k): v for k, v in ESSENTIALS_RULES.items()}
         self.lifestyle = {re.compile(k): v for k, v in LIFESTYLE_RULES.items()}
+        self.ignore = {re.compile(s) for s in IGNORE_RULES}
 
     def categorize(self, s):
         for pat, (category, detail) in self.essentials.items():
@@ -71,12 +80,16 @@ class Rules:
             if pat.match(s):
                 return TopLevel.LIFESTYLE, category, detail
 
-        return TopLevel.LIFESTYLE, "", ""
+        for pat in self.ignore:
+            if pat.match(s):
+                return TopLevel.IGNORE,
+
+        return TopLevel.LIFESTYLE,
 
 
 def process_row(row: dict[str, str], rules) -> Txn:
     return Txn(
-        row["Transaction Date"],
+        row.get("Transaction Date") or row["Posting Date"],
         row["Description"],
         int(float(row["Amount"])),
         *rules.categorize(row["Description"])
@@ -93,4 +106,6 @@ def run_categorize():
     rules = Rules()
     for row in data:
         txn = process_row(row, rules)
+        if txn.top_level == TopLevel.IGNORE:
+            continue
         print(txn)
